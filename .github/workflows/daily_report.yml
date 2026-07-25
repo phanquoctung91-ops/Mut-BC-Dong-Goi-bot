@@ -1,0 +1,33 @@
+name: Gui bao cao hang ngay
+
+on:
+  schedule:
+    # 01:15 UTC = 08:15 giờ Việt Nam. Chạy Thứ 2 - Thứ 7 (bỏ Chủ Nhật).
+    - cron: "15 1 * * 1-6"
+  workflow_dispatch: {}  # cho phép bấm chạy thử thủ công trên GitHub
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cài Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cài poppler (cần cho convert PDF -> ảnh)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Cài thư viện Python
+        run: pip install -r requirements.txt
+
+      - name: Chạy script gửi báo cáo
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+        run: python report_b
