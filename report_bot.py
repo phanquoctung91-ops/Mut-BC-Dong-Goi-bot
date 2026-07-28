@@ -34,13 +34,31 @@ TAB_PREFIX = "BC ĐÓNG GÓI"  # đổi nếu tên tab của bạn khác
 VN_TZ = timezone(timedelta(hours=7))
 
 
-def get_today_tab_name():
-    """Trả về (tên_tab_uu_tien_BS, tên_tab_goc) theo ngày hôm nay giờ VN."""
-    today = datetime.now(VN_TZ)
-    ddmmyy = today.strftime("%d%m%y")
+def get_target_tab_name():
+    """Báo cáo của ngày X được nhập vào sheet vào ngày X+1.
+    Nên khi bot chạy vào ngày hôm nay, tab cần tìm là của HÔM QUA."""
+    target_date = datetime.now(VN_TZ) - timedelta(days=1)
+    ddmmyy = target_date.strftime("%d%m%y")
     base_name = f"{TAB_PREFIX} {ddmmyy}"
     bs_name = f"{base_name} BS"
     return bs_name, base_name
+
+
+STATE_FILE = "state/last_sent.txt"
+
+
+def load_last_sent():
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def save_last_sent(tab_name):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        f.write(tab_name)
 
 
 def load_credentials():
@@ -147,24 +165,26 @@ def send_telegram_text(text):
 
 def main():
     sheet_id = os.environ["SHEET_ID"]
-    bs_name, base_name = get_today_tab_name()
+    bs_name, base_name = get_target_tab_name()
 
     creds = load_credentials()
     matched_name, gid = find_sheet_gid(creds, sheet_id, [bs_name, base_name])
 
     if gid is None:
-        msg = (
-            f"⚠️ Không tìm thấy tab báo cáo hôm nay.\n"
-            f"Đã tìm: \"{bs_name}\" và \"{base_name}\" nhưng không có trong sheet."
-        )
-        print(msg)
-        send_telegram_text(msg)
-        sys.exit(0)  # không coi là lỗi, có thể hôm nay không có báo cáo (cuối tuần...)
+        # Chưa có tab -> im lặng bỏ qua (sẽ tự kiểm tra lại ở lần chạy 15' sau)
+        print(f"Chưa có tab \"{bs_name}\" hoặc \"{base_name}\". Bỏ qua lần này.")
+        sys.exit(0)
+
+    last_sent = load_last_sent()
+    if matched_name == last_sent:
+        print(f"Tab \"{matched_name}\" đã được gửi trước đó rồi. Bỏ qua.")
+        sys.exit(0)
 
     a1_range = get_used_range_a1(creds, sheet_id, matched_name)
     image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
     caption = f"📊 {matched_name}"
     send_telegram_photo(image_path, caption)
+    save_last_sent(matched_name)
     print(f"Đã gửi thành công tab: {matched_name}")
 
 
