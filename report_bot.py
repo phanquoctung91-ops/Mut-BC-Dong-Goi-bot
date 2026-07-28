@@ -1,13 +1,14 @@
 """
-Bot gửi báo cáo Google Sheet hàng ngày vào Telegram dưới dạng ảnh.
+Bot gửi báo cáo Google Sheet hàng ngày vào Telegram dưới dạng ảnh + số liệu tổng hợp.
 
 Cách hoạt động:
-1. Tính ngày hôm nay theo giờ Việt Nam -> ghép thành tên tab dạng "BC ĐÓNG GÓI ddmmyy"
+1. Báo cáo của ngày X được nhập vào sheet vào ngày X+1 -> bot luôn tìm tab của HÔM QUA
 2. Ưu tiên tìm tab có hậu tố " BS" (bổ sung) trước, nếu không có thì dùng tab gốc
-3. Dùng Service Account để lấy quyền, xuất tab đó thành PDF -> convert thành ảnh PNG
-4. Gửi ảnh vào group Telegram
+3. Đọc dữ liệu bảng, tính: tổng kế hoạch/thực tế/%, số mã hàng, ghi chú đặc biệt,
+   so sánh với báo cáo lần trước (lưu trong state/last_sent.txt)
+4. Xuất tab thành ảnh (đúng vùng dữ liệu, không dư khoảng trắng) -> gửi Telegram kèm caption
 
-Các biến môi trường cần thiết (sẽ cấu hình trong GitHub Actions Secrets):
+Các biến môi trường cần thiết (cấu hình trong GitHub Actions Secrets):
 - TELEGRAM_BOT_TOKEN : token của bot Telegram
 - TELEGRAM_CHAT_ID   : chat id của group (số âm)
 - GOOGLE_CREDENTIALS_JSON : toàn bộ nội dung file JSON của service account (dạng text)
@@ -32,6 +33,7 @@ SCOPES = [
 ]
 TAB_PREFIX = "BC ĐÓNG GÓI"  # đổi nếu tên tab của bạn khác
 VN_TZ = timezone(timedelta(hours=7))
+STATE_FILE = "state/last_sent.txt"
 
 
 def get_target_tab_name():
@@ -44,21 +46,22 @@ def get_target_tab_name():
     return bs_name, base_name
 
 
-STATE_FILE = "state/last_sent.txt"
-
-
-def load_last_sent():
+def load_state():
+    """Đọc lại trạng thái lần gửi gần nhất: {"tab": ..., "total_actual": ...}"""
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return ""
+            content = f.read().strip()
+            if not content:
+                return {}
+            return json.loads(content)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
-def save_last_sent(tab_name):
+def save_state(state):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        f.write(tab_name)
+        json.dump(state, f, ensure_ascii=False)
 
 
 def load_credentials():
@@ -87,15 +90,17 @@ def find_sheet_gid(creds, sheet_id, candidate_names):
     return None, None
 
 
-def get_used_range_a1(creds, sheet_id, sheet_title):
-    """Tính vùng có dữ liệu thực tế (VD: A1:F16) để cắt bỏ khoảng trắng thừa khi xuất ảnh."""
+def fetch_sheet_values(creds, sheet_id, sheet_title):
     service = build("sheets", "v4", credentials=creds)
     result = service.spreadsheets().values().get(
         spreadsheetId=sheet_id,
         range=f"'{sheet_title}'!A1:Z300",
     ).execute()
-    values = result.get("values", [])
+    return result.get("values", [])
 
+
+def get_used_range_a1(values):
+    """Tính vùng có dữ liệu thực tế (VD: A1:F16) để cắt bỏ khoảng trắng thừa khi xuất ảnh."""
     last_row = 0
     last_col = 0
     for r_idx, row in enumerate(values, start=1):
@@ -105,7 +110,7 @@ def get_used_range_a1(creds, sheet_id, sheet_title):
                 last_col = max(last_col, c_idx)
 
     if last_row == 0 or last_col == 0:
-        return None  # không xác định được, xuất nguyên trang
+        return None
 
     def col_letter(n):
         letters = ""
@@ -115,6 +120,111 @@ def get_used_range_a1(creds, sheet_id, sheet_title):
         return letters
 
     return f"A1:{col_letter(last_col)}{last_row}"
+
+
+def _to_number(text):
+    text = text.replace(",", "").replace(".", "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+
+def parse_report_metrics(values):
+    """Đọc bảng báo cáo, trả về dict số liệu tổng hợp (hoặc None nếu không nhận diện được)."""
+    header_idx = None
+    col_idx = {}
+    for i, row in enumerate(values):
+        cells = [str(c).strip() for c in row]
+        if "Kế hoạch" in cells and "Thực tế" in cells:
+            header_idx = i
+            for j, cell in enumerate(cells):
+                col_idx[cell] = j
+            break
+
+    if header_idx is None:
+        return None
+
+    def get_cell(row, key):
+        idx = col_idx.get(key)
+        if idx is None or idx >= len(row):
+            return ""
+        return str(row[idx]).strip()
+
+    product_rows = []
+    total_row = None
+    for row in values[header_idx + 1:]:
+        if not row:
+            continue
+        first_nonempty = next((str(c).strip() for c in row if str(c).strip()), "")
+        if first_nonempty.upper() == "TỔNG":
+            total_row = row
+            break
+        product_rows.append(row)
+
+    total_plan = _to_number(get_cell(total_row, "Kế hoạch")) if total_row else None
+    total_actual = _to_number(get_cell(total_row, "Thực tế")) if total_row else None
+
+    percent = None
+    if total_plan and total_actual is not None and total_plan != 0:
+        percent = round(total_actual / total_plan * 100, 1)
+
+    so_ma_hang = sum(1 for r in product_rows if get_cell(r, "Tên nệm") != "")
+
+    notes = []
+    for r in product_rows:
+        note = get_cell(r, "Ghi chú")
+        if note:
+            ten = get_cell(r, "Tên nệm")
+            kich_thuoc = get_cell(r, "Kích thước")
+            label = " ".join(x for x in [ten, kich_thuoc] if x)
+            notes.append(f"{label} – {note}" if label else note)
+
+    return {
+        "total_plan": total_plan,
+        "total_actual": total_actual,
+        "percent": percent,
+        "so_ma_hang": so_ma_hang,
+        "notes": notes,
+    }
+
+
+def build_caption(matched_name, metrics, prev_total_actual):
+    lines = [f"📊 {matched_name}", ""]
+
+    if not metrics:
+        return lines[0]  # không đọc được bảng -> chỉ hiện tên tab
+
+    tp = metrics["total_plan"]
+    ta = metrics["total_actual"]
+    pct = metrics["percent"]
+
+    if tp is not None and ta is not None:
+        pct_text = f" ({pct}%)" if pct is not None else ""
+        lines.append(f"📈 Tổng: Kế hoạch {tp} | Thực tế {ta}{pct_text}")
+
+    lines.append(f"🏷️ Số mã hàng: {metrics['so_ma_hang']} dòng sản phẩm")
+
+    if pct is not None:
+        if pct >= 100:
+            lines.append(f"✅ Hoàn thành {pct}% kế hoạch")
+        else:
+            lines.append(f"⚠️ Chỉ đạt {pct}% kế hoạch — chưa hoàn thành")
+
+    if metrics["notes"]:
+        lines.append("📝 Ghi chú đặc biệt: " + "; ".join(metrics["notes"]))
+
+    if prev_total_actual is not None and ta is not None:
+        diff = ta - prev_total_actual
+        sign = "+" if diff >= 0 else ""
+        lines.append(f"🔄 So với báo cáo trước: {sign}{diff} sản phẩm")
+
+    return "\n".join(lines)
 
 
 def export_tab_as_png(creds, sheet_id, gid, a1_range=None):
@@ -155,14 +265,6 @@ def send_telegram_photo(image_path, caption):
     resp.raise_for_status()
 
 
-def send_telegram_text(text):
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    resp = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=30)
-    resp.raise_for_status()
-
-
 def main():
     sheet_id = os.environ["SHEET_ID"]
     bs_name, base_name = get_target_tab_name()
@@ -171,20 +273,27 @@ def main():
     matched_name, gid = find_sheet_gid(creds, sheet_id, [bs_name, base_name])
 
     if gid is None:
-        # Chưa có tab -> im lặng bỏ qua (sẽ tự kiểm tra lại ở lần chạy 15' sau)
         print(f"Chưa có tab \"{bs_name}\" hoặc \"{base_name}\". Bỏ qua lần này.")
         sys.exit(0)
 
-    last_sent = load_last_sent()
-    if matched_name == last_sent:
+    state = load_state()
+    if matched_name == state.get("tab"):
         print(f"Tab \"{matched_name}\" đã được gửi trước đó rồi. Bỏ qua.")
         sys.exit(0)
 
-    a1_range = get_used_range_a1(creds, sheet_id, matched_name)
+    values = fetch_sheet_values(creds, sheet_id, matched_name)
+    a1_range = get_used_range_a1(values)
+    metrics = parse_report_metrics(values)
+    prev_total_actual = state.get("total_actual")
+
     image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
-    caption = f"📊 {matched_name}"
+    caption = build_caption(matched_name, metrics, prev_total_actual)
     send_telegram_photo(image_path, caption)
-    save_last_sent(matched_name)
+
+    save_state({
+        "tab": matched_name,
+        "total_actual": metrics["total_actual"] if metrics else None,
+    })
     print(f"Đã gửi thành công tab: {matched_name}")
 
 
