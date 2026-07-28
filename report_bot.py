@@ -69,13 +69,46 @@ def find_sheet_gid(creds, sheet_id, candidate_names):
     return None, None
 
 
-def export_tab_as_png(creds, sheet_id, gid):
+def get_used_range_a1(creds, sheet_id, sheet_title):
+    """Tính vùng có dữ liệu thực tế (VD: A1:F16) để cắt bỏ khoảng trắng thừa khi xuất ảnh."""
+    service = build("sheets", "v4", credentials=creds)
+    result = service.spreadsheets().values().get(
+        spreadsheetId=sheet_id,
+        range=f"'{sheet_title}'!A1:Z300",
+    ).execute()
+    values = result.get("values", [])
+
+    last_row = 0
+    last_col = 0
+    for r_idx, row in enumerate(values, start=1):
+        for c_idx, cell in enumerate(row, start=1):
+            if str(cell).strip() != "":
+                last_row = max(last_row, r_idx)
+                last_col = max(last_col, c_idx)
+
+    if last_row == 0 or last_col == 0:
+        return None  # không xác định được, xuất nguyên trang
+
+    def col_letter(n):
+        letters = ""
+        while n > 0:
+            n, rem = divmod(n - 1, 26)
+            letters = chr(65 + rem) + letters
+        return letters
+
+    return f"A1:{col_letter(last_col)}{last_row}"
+
+
+def export_tab_as_png(creds, sheet_id, gid, a1_range=None):
     export_url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
         f"?format=pdf&gid={gid}"
-        f"&size=A4&portrait=false&fitw=true&gridlines=false"
-        f"&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25"
+        f"&portrait=false&fitw=true&gridlines=false"
+        f"&top_margin=0&bottom_margin=0&left_margin=0&right_margin=0"
+        f"&horizontal_alignment=CENTER&vertical_alignment=TOP"
     )
+    if a1_range:
+        export_url += f"&range={a1_range}"
     resp = requests.get(
         export_url, headers={"Authorization": f"Bearer {creds.token}"}, timeout=60
     )
@@ -128,7 +161,8 @@ def main():
         send_telegram_text(msg)
         sys.exit(0)  # không coi là lỗi, có thể hôm nay không có báo cáo (cuối tuần...)
 
-    image_path = export_tab_as_png(creds, sheet_id, gid)
+    a1_range = get_used_range_a1(creds, sheet_id, matched_name)
+    image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
     caption = f"📊 {matched_name}"
     send_telegram_photo(image_path, caption)
     print(f"Đã gửi thành công tab: {matched_name}")
