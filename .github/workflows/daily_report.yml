@@ -1,10 +1,7 @@
 name: Gui bao cao hang ngay
 
 on:
-  schedule:
-    # Mỗi 15 phút, từ 00:00-10:59 UTC = 07:00-17:59 giờ Việt Nam, Thứ 2 - Thứ 7
-    - cron: "*/15 0-10 * * 1-6"
-  workflow_dispatch: {}  # cho phép bấm chạy thử thủ công trên GitHub
+ workflow_dispatch: {}  # cho phép bấm chạy thử thủ công trên GitHub
 
 permissions:
   contents: write  # cần quyền ghi để bot tự lưu "đã gửi tab nào" vào repo
