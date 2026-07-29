@@ -231,7 +231,7 @@ def export_tab_as_png(creds, sheet_id, gid, a1_range=None):
     export_url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
         f"?format=pdf&gid={gid}"
-        f"&portrait=false&fitw=true&gridlines=false"
+        f"&size=A4&portrait=false&scale=4&gridlines=false"
         f"&top_margin=0&bottom_margin=0&left_margin=0&right_margin=0"
         f"&horizontal_alignment=CENTER&vertical_alignment=TOP"
     )
@@ -247,7 +247,19 @@ def export_tab_as_png(creds, sheet_id, gid, a1_range=None):
         raise RuntimeError("Không convert được PDF thành ảnh")
 
     out_path = "/tmp/report.png"
-    images[0].save(out_path, "PNG")
+    if len(images) == 1:
+        images[0].save(out_path, "PNG")
+    else:
+        # Phòng trường hợp vẫn tràn hơn 1 trang -> ghép các trang lại theo chiều dọc
+        total_width = max(img.width for img in images)
+        total_height = sum(img.height for img in images)
+        from PIL import Image
+        combined = Image.new("RGB", (total_width, total_height), "white")
+        y = 0
+        for img in images:
+            combined.paste(img, (0, y))
+            y += img.height
+        combined.save(out_path, "PNG")
     return out_path
 
 
