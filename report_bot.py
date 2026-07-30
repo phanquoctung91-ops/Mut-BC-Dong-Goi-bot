@@ -217,7 +217,9 @@ def build_caption(matched_name, metrics, prev_total_actual):
             lines.append(f"⚠️ Chỉ đạt {pct}% kế hoạch — chưa hoàn thành")
 
     if metrics["notes"]:
-        lines.append("📝 Ghi chú đặc biệt: " + "; ".join(metrics["notes"]))
+        lines.append("📝 Ghi chú đặc biệt:")
+        for note in metrics["notes"]:
+            lines.append(f"• {note}")
 
     if prev_total_actual is not None and ta is not None:
         diff = ta - prev_total_actual
