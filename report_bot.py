@@ -296,8 +296,19 @@ def main():
         sys.exit(0)
 
     values = fetch_sheet_values(creds, sheet_id, matched_name)
-    a1_range = get_used_range_a1(values)
     metrics = parse_report_metrics(values)
+
+    # Chưa sẵn sàng: chưa có dòng TỔNG, chưa có số thực tế, hoặc chưa có sản phẩm nào
+    # -> có thể bạn vẫn đang nhập liệu dở, bỏ qua lần này, thử lại ở lần kiểm tra sau
+    if (
+        not metrics
+        or metrics.get("total_actual") is None
+        or metrics.get("so_ma_hang", 0) == 0
+    ):
+        print(f"Tab \"{matched_name}\" đã tồn tại nhưng dữ liệu chưa đầy đủ. Bỏ qua, thử lại sau.")
+        sys.exit(0)
+
+    a1_range = get_used_range_a1(values)
     prev_total_actual = state.get("total_actual")
 
     image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
