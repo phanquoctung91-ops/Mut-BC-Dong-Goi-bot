@@ -18,6 +18,7 @@ Các biến môi trường cần thiết (cấu hình trong GitHub Actions Secre
 import os
 import sys
 import json
+import re
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -34,32 +35,38 @@ SCOPES = [
 TAB_PREFIX = "BC ĐÓNG GÓI"  # đổi nếu tên tab của bạn khác
 VN_TZ = timezone(timedelta(hours=7))
 STATE_FILE = "state/last_sent.txt"
-
-
-def get_target_tab_name():
-    """Báo cáo của ngày X được nhập vào sheet vào ngày X+1.
-    Nên khi bot chạy vào ngày hôm nay, tab cần tìm là của HÔM QUA."""
-    target_date = datetime.now(VN_TZ) - timedelta(days=1)
-    ddmmyy = target_date.strftime("%d%m%y")
-    base_name = f"{TAB_PREFIX} {ddmmyy}"
-    bs_name = f"{base_name} BS"
-    return bs_name, base_name
+LOOKBACK_DAYS = 5  # số ngày tối đa để bot tự "quét bù" nếu bị bỏ lỡ (cron lỗi, nghỉ lễ...)
 
 
 def load_state():
-    """Đọc lại trạng thái lần gửi gần nhất: {"tab": ..., "total_actual": ...}"""
+    """Đọc trạng thái: {"sent": {"ddmmyy": total_actual, ...}}"""
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             content = f.read().strip()
             if not content:
-                return {}
-            return json.loads(content)
+                return {"sent": {}}
+            data = json.loads(content)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        return {"sent": {}}
+
+    if "sent" in data:
+        return data
+
+    # Định dạng cũ (chỉ lưu 1 tab gần nhất) -> chuyển đổi cho tương thích ngược
+    sent = {}
+    m = re.search(r"(\d{6})", data.get("tab", ""))
+    if m and data.get("total_actual") is not None:
+        sent[m.group(1)] = data["total_actual"]
+    return {"sent": sent}
 
 
 def save_state(state):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    sent = state.get("sent", {})
+    if len(sent) > 30:  # chỉ giữ 30 ngày gần nhất, tránh file phình to
+        sorted_items = sorted(sent.items(), key=lambda kv: datetime.strptime(kv[0], "%d%m%y"))
+        sent = dict(sorted_items[-30:])
+        state["sent"] = sent
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False)
 
@@ -281,45 +288,68 @@ def send_telegram_photo(image_path, caption):
 
 def main():
     sheet_id = os.environ["SHEET_ID"]
-    bs_name, base_name = get_target_tab_name()
-
     creds = load_credentials()
-    matched_name, gid = find_sheet_gid(creds, sheet_id, [bs_name, base_name])
-
-    if gid is None:
-        print(f"Chưa có tab \"{bs_name}\" hoặc \"{base_name}\". Bỏ qua lần này.")
-        sys.exit(0)
-
     state = load_state()
-    if matched_name == state.get("tab"):
-        print(f"Tab \"{matched_name}\" đã được gửi trước đó rồi. Bỏ qua.")
-        sys.exit(0)
+    sent = state.get("sent", {})
 
-    values = fetch_sheet_values(creds, sheet_id, matched_name)
-    metrics = parse_report_metrics(values)
+    today = datetime.now(VN_TZ)
+    earliest_allowed = today - timedelta(days=LOOKBACK_DAYS)
 
-    # Chưa sẵn sàng: chưa có dòng TỔNG, chưa có số thực tế, hoặc chưa có sản phẩm nào
-    # -> có thể bạn vẫn đang nhập liệu dở, bỏ qua lần này, thử lại ở lần kiểm tra sau
-    if (
-        not metrics
-        or metrics.get("total_actual") is None
-        or metrics.get("so_ma_hang", 0) == 0
-    ):
-        print(f"Tab \"{matched_name}\" đã tồn tại nhưng dữ liệu chưa đầy đủ. Bỏ qua, thử lại sau.")
-        sys.exit(0)
+    if sent:
+        last_sent_date = max(
+            datetime.strptime(k, "%d%m%y").replace(tzinfo=VN_TZ) for k in sent.keys()
+        )
+        start_date = last_sent_date + timedelta(days=1)
+        if start_date < earliest_allowed:
+            start_date = earliest_allowed  # tránh gửi dồn quá nhiều nếu bot ngừng chạy lâu ngày
+    else:
+        start_date = earliest_allowed
 
-    a1_range = get_used_range_a1(values)
-    prev_total_actual = state.get("total_actual")
+    end_date = today - timedelta(days=1)  # hôm qua
 
-    image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
-    caption = build_caption(matched_name, metrics, prev_total_actual)
-    send_telegram_photo(image_path, caption)
+    any_sent = False
+    d = start_date
+    while d <= end_date:
+        ddmmyy = d.strftime("%d%m%y")
 
-    save_state({
-        "tab": matched_name,
-        "total_actual": metrics["total_actual"] if metrics else None,
-    })
-    print(f"Đã gửi thành công tab: {matched_name}")
+        base_name = f"{TAB_PREFIX} {ddmmyy}"
+        bs_name = f"{base_name} BS"
+        matched_name, gid = find_sheet_gid(creds, sheet_id, [bs_name, base_name])
+
+        if gid is None:
+            print(f"Chưa có tab cho ngày {ddmmyy}. Bỏ qua, không chặn các ngày sau.")
+            d += timedelta(days=1)
+            continue
+
+        values = fetch_sheet_values(creds, sheet_id, matched_name)
+        metrics = parse_report_metrics(values)
+
+        if (
+            not metrics
+            or metrics.get("total_actual") is None
+            or metrics.get("so_ma_hang", 0) == 0
+        ):
+            print(f"Tab \"{matched_name}\" tồn tại nhưng dữ liệu chưa đầy đủ. Bỏ qua, thử lại sau.")
+            d += timedelta(days=1)
+            continue
+
+        prev_ddmmyy = (d - timedelta(days=1)).strftime("%d%m%y")
+        prev_total_actual = sent.get(prev_ddmmyy)
+
+        a1_range = get_used_range_a1(values)
+        image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
+        caption = build_caption(matched_name, metrics, prev_total_actual)
+        send_telegram_photo(image_path, caption)
+
+        sent[ddmmyy] = metrics["total_actual"]
+        state["sent"] = sent
+        save_state(state)  # lưu ngay sau mỗi lần gửi, tránh gửi trùng nếu có lỗi giữa chừng
+        print(f"Đã gửi thành công tab: {matched_name}")
+        any_sent = True
+        d += timedelta(days=1)
+
+    if not any_sent:
+        print("Không có báo cáo mới nào cần gửi trong lần kiểm tra này.")
 
 
 if __name__ == "__main__":
