@@ -183,6 +183,11 @@ def parse_report_metrics(values):
 
     so_ma_hang = sum(1 for r in product_rows if get_cell(r, "Tên nệm") != "")
 
+    missing_ma_hang = sum(
+        1 for r in product_rows
+        if get_cell(r, "Tên nệm") != "" and get_cell(r, "Mã hàng") == ""
+    )
+
     notes = []
     for r in product_rows:
         note = get_cell(r, "Ghi chú")
@@ -197,6 +202,7 @@ def parse_report_metrics(values):
         "total_actual": total_actual,
         "percent": percent,
         "so_ma_hang": so_ma_hang,
+        "missing_ma_hang": missing_ma_hang,
         "notes": notes,
     }
 
@@ -328,8 +334,9 @@ def main():
             not metrics
             or metrics.get("total_actual") is None
             or metrics.get("so_ma_hang", 0) == 0
+            or metrics.get("missing_ma_hang", 0) > 0
         ):
-            print(f"Tab \"{matched_name}\" tồn tại nhưng dữ liệu chưa đầy đủ. Bỏ qua, thử lại sau.")
+            print(f"Tab \"{matched_name}\" tồn tại nhưng dữ liệu chưa đầy đủ (thiếu Mã hàng). Bỏ qua, thử lại sau.")
             d += timedelta(days=1)
             continue
 
