@@ -1,0 +1,10 @@
+Không có báo cáo mới nào cần gửi trong lần kiểm tra này.
+Không có báo cáo mới nào cần gửi trong lần kiểm tra này.
+Chưa có tab cho ngày 200826. Bỏ qua, không chặn các ngày sau.
+Không có báo cáo mới nào cần gửi trong lần kiểm tra này.
+Đã gửi thành công tab: BC ĐÓNG GÓI 200826
+Chưa có tab cho ngày 210826. Bỏ qua, không chặn các ngày sau.
+Đã gửi thành công tab: BC ĐÓNG GÓI 210826
+Không có báo cáo mới nào cần gửi trong lần kiểm tra này.
+Đã gửi thành công tab: BC ĐÓNG GÓI 220826
+Chưa có tab cho ngày 230826. Bỏ qua, không chặn các ngày sau.

@@ -4,34 +4,36 @@ Bot gửi báo cáo Google Sheet hàng ngày vào Telegram dưới dạng ảnh 
 Cách hoạt động:
 1. Báo cáo của ngày X được nhập vào sheet vào ngày X+1 -> bot luôn tìm tab của HÔM QUA
 2. Ưu tiên tìm tab có hậu tố " BS" (bổ sung) trước, nếu không có thì dùng tab gốc
-3. Đọc dữ liệu bảng, tính: tổng kế hoạch/thực tế/%, số mã hàng, ghi chú đặc biệt,
-   so sánh với báo cáo lần trước (lưu trong state/last_sent.txt)
-4. Xuất tab thành ảnh (đúng vùng dữ liệu, không dư khoảng trắng) -> gửi Telegram kèm caption
+3. Đọc dữ liệu bảng qua link công khai của sheet (không cần service account), tính:
+   tổng kế hoạch/thực tế/%, số mã hàng, ghi chú đặc biệt, so sánh với báo cáo lần trước
+   (lưu trong state/last_sent.txt)
+4. Tự vẽ ảnh bảng báo cáo bằng PIL (không cần Google export + poppler) -> gửi Telegram kèm caption
 
-Các biến môi trường cần thiết (cấu hình trong GitHub Actions Secrets):
+Các biến môi trường cần thiết:
 - TELEGRAM_BOT_TOKEN : token của bot Telegram
 - TELEGRAM_CHAT_ID   : chat id của group (số âm)
-- GOOGLE_CREDENTIALS_JSON : toàn bộ nội dung file JSON của service account (dạng text)
-- SHEET_ID           : ID của Google Sheet (lấy từ URL sheet)
+- SHEET_ID           : ID của Google Sheet (lấy từ URL sheet) — sheet phải ở chế độ
+                        chia sẻ "Anyone with the link can view".
 """
 
 import os
 import sys
+import csv
+import io
 import json
 import re
+import tempfile
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 import requests
-from google.oauth2 import service_account
-from google.auth.transport.requests import Request as GoogleAuthRequest
-from googleapiclient.discovery import build
-from pdf2image import convert_from_bytes
+from PIL import Image, ImageDraw, ImageFont
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 # ---------- Cấu hình ----------
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-]
 TAB_PREFIX = "BC ĐÓNG GÓI"  # đổi nếu tên tab của bạn khác
 VN_TZ = timezone(timedelta(hours=7))
 STATE_FILE = "state/last_sent.txt"
@@ -71,62 +73,35 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False)
 
 
-def load_credentials():
-    raw = os.environ["GOOGLE_CREDENTIALS_JSON"]
-    info = json.loads(raw)
-    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    creds.refresh(GoogleAuthRequest())
-    return creds
+def fetch_sheet_csv(sheet_id, sheet_name):
+    """Đọc 1 tab qua link công khai (sheet phải share 'Anyone with the link: Viewer')."""
+    url = (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq"
+        f"?tqx=out:csv&sheet={urllib.parse.quote(sheet_name)}"
+    )
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    return list(csv.reader(io.StringIO(resp.text)))
 
 
-def find_sheet_gid(creds, sheet_id, candidate_names):
-    """Tìm gid của tab khớp với danh sách tên ưu tiên (theo thứ tự)."""
-    service = build("sheets", "v4", credentials=creds)
-    meta = service.spreadsheets().get(
-        spreadsheetId=sheet_id, fields="sheets(properties(sheetId,title))"
-    ).execute()
-
-    title_to_gid = {
-        s["properties"]["title"]: s["properties"]["sheetId"]
-        for s in meta.get("sheets", [])
-    }
-
-    for name in candidate_names:
-        if name in title_to_gid:
-            return name, title_to_gid[name]
-    return None, None
-
-
-def fetch_sheet_values(creds, sheet_id, sheet_title):
-    service = build("sheets", "v4", credentials=creds)
-    result = service.spreadsheets().values().get(
-        spreadsheetId=sheet_id,
-        range=f"'{sheet_title}'!A1:Z300",
-    ).execute()
-    return result.get("values", [])
-
-
-def get_used_range_a1(values):
-    """Tính vùng có dữ liệu thực tế (VD: A1:F16) để cắt bỏ khoảng trắng thừa khi xuất ảnh."""
-    last_row = 0
-    last_col = 0
-    for r_idx, row in enumerate(values, start=1):
-        for c_idx, cell in enumerate(row, start=1):
-            if str(cell).strip() != "":
-                last_row = max(last_row, r_idx)
-                last_col = max(last_col, c_idx)
-
-    if last_row == 0 or last_col == 0:
+def extract_report_date_ddmmyy(rows):
+    """Google trả CSV của tab đầu tiên nếu tên tab không tồn tại, nên phải tự đối chiếu
+    ngày in trong nội dung báo cáo (dòng 'BÁO CÁO SẢN XUẤT NGÀY dd/mm/yyyy') để xác nhận
+    đúng tab, thay vì tin tưởng mù tên tab đã yêu cầu."""
+    text = " ".join(str(c) for row in rows[:3] for c in row)
+    m = re.search(r"NG[ÀA]Y\s*(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if not m:
         return None
+    d, mo, y = m.groups()
+    return f"{int(d):02d}{int(mo):02d}{y[2:]}"
 
-    def col_letter(n):
-        letters = ""
-        while n > 0:
-            n, rem = divmod(n - 1, 26)
-            letters = chr(65 + rem) + letters
-        return letters
 
-    return f"A1:{col_letter(last_col)}{last_row}"
+def find_matching_tab(sheet_id, candidate_names, target_ddmmyy):
+    for name in candidate_names:
+        rows = fetch_sheet_csv(sheet_id, name)
+        if extract_report_date_ddmmyy(rows) == target_ddmmyy:
+            return name, rows
+    return None, None
 
 
 def _to_number(text):
@@ -143,15 +118,21 @@ def _to_number(text):
 
 
 def parse_report_metrics(values):
-    """Đọc bảng báo cáo, trả về dict số liệu tổng hợp (hoặc None nếu không nhận diện được)."""
+    """Đọc bảng báo cáo, trả về dict số liệu tổng hợp (hoặc None nếu không nhận diện được).
+
+    Một số ô tiêu đề trong sheet bị dính chữ letterhead công ty ở đầu (VD: "...www.nemthanhcong.com Tên nệm"
+    thay vì chỉ "Tên nệm" gọn), nên phải so khớp theo hậu tố (endswith) chứ không so khớp tuyệt đối."""
+    KNOWN_LABELS = ["Tên nệm", "Kích thước", "Kế hoạch", "Thực tế", "Ghi chú"]
     header_idx = None
     col_idx = {}
     for i, row in enumerate(values):
         cells = [str(c).strip() for c in row]
-        if "Kế hoạch" in cells and "Thực tế" in cells:
+        if any(c == "Kế hoạch" for c in cells) and any(c == "Thực tế" for c in cells):
             header_idx = i
-            for j, cell in enumerate(cells):
-                col_idx[cell] = j
+            for label in KNOWN_LABELS:
+                idx = next((j for j, c in enumerate(cells) if c == label or c.endswith(" " + label)), None)
+                if idx is not None:
+                    col_idx[label] = idx
             break
 
     if header_idx is None:
@@ -236,39 +217,73 @@ def build_caption(matched_name, metrics, prev_total_actual):
     return "\n".join(lines)
 
 
-def export_tab_as_png(creds, sheet_id, gid, a1_range=None):
-    export_url = (
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
-        f"?format=pdf&gid={gid}"
-        f"&size=A4&portrait=false&scale=4&gridlines=false"
-        f"&top_margin=0&bottom_margin=0&left_margin=0&right_margin=0"
-        f"&horizontal_alignment=CENTER&vertical_alignment=TOP"
-    )
-    if a1_range:
-        export_url += f"&range={a1_range}"
-    resp = requests.get(
-        export_url, headers={"Authorization": f"Bearer {creds.token}"}, timeout=60
-    )
-    resp.raise_for_status()
+def _trim_used_range(values):
+    last_row = 0
+    last_col = 0
+    for i, row in enumerate(values):
+        for j, cell in enumerate(row):
+            if str(cell).strip() != "":
+                last_row = max(last_row, i + 1)
+                last_col = max(last_col, j + 1)
+    return [row[:last_col] for row in values[:last_row]]
 
-    images = convert_from_bytes(resp.content, dpi=200)
-    if not images:
-        raise RuntimeError("Không convert được PDF thành ảnh")
 
-    out_path = "/tmp/report.png"
-    if len(images) == 1:
-        images[0].save(out_path, "PNG")
-    else:
-        # Phòng trường hợp vẫn tràn hơn 1 trang -> ghép các trang lại theo chiều dọc
-        total_width = max(img.width for img in images)
-        total_height = sum(img.height for img in images)
-        from PIL import Image
-        combined = Image.new("RGB", (total_width, total_height), "white")
-        y = 0
-        for img in images:
-            combined.paste(img, (0, y))
-            y += img.height
-        combined.save(out_path, "PNG")
+def render_table_image(values, out_path):
+    """Tự vẽ ảnh bảng báo cáo bằng PIL, thay cho việc xuất ảnh qua Google + poppler."""
+    rows = _trim_used_range(values)
+    if not rows:
+        raise RuntimeError("Không có dữ liệu để vẽ ảnh")
+
+    max_len = 28
+
+    def cell_text(c):
+        s = str(c).strip()
+        return (s[: max_len - 1] + "…") if len(s) > max_len else s
+
+    rows = [[cell_text(c) for c in row] for row in rows]
+    ncols = max(len(r) for r in rows)
+    rows = [r + [""] * (ncols - len(r)) for r in rows]
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 18)
+        font_bold = ImageFont.truetype("arialbd.ttf", 18)
+    except OSError:
+        font = ImageFont.load_default()
+        font_bold = font
+
+    pad_x, pad_y = 10, 6
+    tmp = Image.new("RGB", (10, 10))
+    measure = ImageDraw.Draw(tmp)
+    col_widths = [0] * ncols
+    row_height = 0
+    for r in rows:
+        for j, c in enumerate(r):
+            bbox = measure.textbbox((0, 0), c or " ", font=font_bold)
+            col_widths[j] = max(col_widths[j], (bbox[2] - bbox[0]) + pad_x * 2)
+            row_height = max(row_height, (bbox[3] - bbox[1]) + pad_y * 2)
+
+    total_width = sum(col_widths)
+    total_height = row_height * len(rows)
+    img = Image.new("RGB", (total_width + 1, total_height + 1), "white")
+    draw = ImageDraw.Draw(img)
+
+    header_idx = next((i for i, r in enumerate(rows) if "Kế hoạch" in r and "Thực tế" in r), None)
+    total_idx = next((i for i, r in enumerate(rows) if r and r[0].strip().upper() == "TỔNG"), None)
+
+    y = 0
+    for i, r in enumerate(rows):
+        x = 0
+        is_bold = i in (header_idx, total_idx)
+        for j, c in enumerate(r):
+            w = col_widths[j]
+            if is_bold:
+                draw.rectangle([x, y, x + w, y + row_height], fill="#e8e8e8")
+            draw.rectangle([x, y, x + w, y + row_height], outline="#999999")
+            draw.text((x + pad_x, y + pad_y), c, fill="black", font=font_bold if is_bold else font)
+            x += w
+        y += row_height
+
+    img.save(out_path, "PNG")
     return out_path
 
 
@@ -288,7 +303,6 @@ def send_telegram_photo(image_path, caption):
 
 def main():
     sheet_id = os.environ["SHEET_ID"]
-    creds = load_credentials()
     state = load_state()
     sent = state.get("sent", {})
 
@@ -314,14 +328,13 @@ def main():
 
         base_name = f"{TAB_PREFIX} {ddmmyy}"
         bs_name = f"{base_name} BS"
-        matched_name, gid = find_sheet_gid(creds, sheet_id, [bs_name, base_name])
+        matched_name, values = find_matching_tab(sheet_id, [bs_name, base_name], ddmmyy)
 
-        if gid is None:
+        if matched_name is None:
             print(f"Chưa có tab cho ngày {ddmmyy}. Bỏ qua, không chặn các ngày sau.")
             d += timedelta(days=1)
             continue
 
-        values = fetch_sheet_values(creds, sheet_id, matched_name)
         metrics = parse_report_metrics(values)
 
         if (
@@ -336,8 +349,8 @@ def main():
         prev_ddmmyy = (d - timedelta(days=1)).strftime("%d%m%y")
         prev_total_actual = sent.get(prev_ddmmyy)
 
-        a1_range = get_used_range_a1(values)
-        image_path = export_tab_as_png(creds, sheet_id, gid, a1_range)
+        out_path = os.path.join(tempfile.gettempdir(), "mut_bc_dong_goi_report.png")
+        image_path = render_table_image(values, out_path)
         caption = build_caption(matched_name, metrics, prev_total_actual)
         send_telegram_photo(image_path, caption)
 
