@@ -122,7 +122,7 @@ def parse_report_metrics(values):
 
     Một số ô tiêu đề trong sheet bị dính chữ letterhead công ty ở đầu (VD: "...www.nemthanhcong.com Tên nệm"
     thay vì chỉ "Tên nệm" gọn), nên phải so khớp theo hậu tố (endswith) chứ không so khớp tuyệt đối."""
-    KNOWN_LABELS = ["Tên nệm", "Kích thước", "Kế hoạch", "Thực tế", "Ghi chú"]
+    KNOWN_LABELS = ["Mã hàng", "Tên nệm", "Kích thước", "Kế hoạch", "Thực tế", "Ghi chú"]
     header_idx = None
     col_idx = {}
     for i, row in enumerate(values):
@@ -347,9 +347,8 @@ def main():
             not metrics
             or metrics.get("total_actual") is None
             or metrics.get("so_ma_hang", 0) == 0
-            or metrics.get("missing_ma_hang", 0) > 0
         ):
-            print(f"Tab \"{matched_name}\" tồn tại nhưng dữ liệu chưa đầy đủ (thiếu Mã hàng). Bỏ qua, thử lại sau.")
+            print(f"Tab \"{matched_name}\" tồn tại nhưng dữ liệu chưa đầy đủ. Bỏ qua, thử lại sau.")
             d += timedelta(days=1)
             continue
 

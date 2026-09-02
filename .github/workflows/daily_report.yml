@@ -1,0 +1,52 @@
+name: Gui bao cao hang ngay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/daily_report.yml"
+      - "report_bot.py"
+      - "requirements.txt"
+  schedule:
+    # 07:00-17:59 gio Viet Nam, Thu 2-Thu 7.
+    - cron: "*/15 0-10 * * 1-6"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mut-bc-dong-goi-daily-report
+  cancel-in-progress: false
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lay source code
+        uses: actions/checkout@v4
+
+      - name: Cai Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cai thu vien
+        run: pip install -r requirements.txt
+
+      - name: Chay bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+        run: python report_bot.py
+
+      - name: Luu trang thai da gui
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain state/last_sent.txt)" ]; then
+            git add state/last_sent.txt
+            git commit -m "Cap nhat trang thai da gui bao cao"
+            git push
+          fi
