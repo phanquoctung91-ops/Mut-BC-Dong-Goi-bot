@@ -32,12 +32,16 @@ jobs:
           python-version: "3.11"
 
       - name: Cai thu vien
-        run: pip install -r requirements.txt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          pip install -r requirements.txt
 
       - name: Chay bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python report_bot.py
 
