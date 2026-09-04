@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 run_log.txt
+.npm-cache/
+cloudflare-dispatcher/.wrangler-config/
+cloudflare-dispatcher/.wrangler/
+cloudflare-dispatcher/.dev.vars

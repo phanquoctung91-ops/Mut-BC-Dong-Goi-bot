@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "mut-bc-dong-goi-dispatcher",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "GITHUB_OWNER": "phanquoctung91-ops",
+    "GITHUB_REPO": "Mut-BC-Dong-Goi-bot",
+    "GITHUB_WORKFLOW": "daily_report.yml"
+  },
+  "triggers": {
+    "crons": ["*/15 0-10 * * MON-SAT"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    }
+  }
+}

@@ -7,9 +7,6 @@ on:
       - ".github/workflows/daily_report.yml"
       - "report_bot.py"
       - "requirements.txt"
-  schedule:
-    # 07:00-17:59 gio Viet Nam, Thu 2-Thu 7.
-    - cron: "*/15 0-10 * * 1-6"
   workflow_dispatch: {}
 
 permissions:
