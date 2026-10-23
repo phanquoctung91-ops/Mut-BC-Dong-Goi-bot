@@ -23,6 +23,7 @@ from googleapiclient.discovery import build
 SHEET_ID = "177wqQjNq8B5n3dG-Fe1N43atitmX66J5phaWYsLyJq0"
 TAB_RE = re.compile(r"^BC BẢO HÀNH MÚT (\d{6})( BS)?$")
 STATE_FILE = "state/bh_sent.json"
+START = datetime(2026, 10, 22)  # tab cũ hơn ngày bật bot: bỏ qua, không gửi lại
 WORK_DAYS = 26  # số ngày làm việc/tháng dùng tính trung bình
 
 
@@ -104,7 +105,7 @@ def main():
         return cache[k]
 
     for k in keys:
-        if k in sent:
+        if k in sent or day(k) < START:
             continue
         rows, total = rows_total(k)
         if not total:
