@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/daily_report.yml"
       - "report_bot.py"
+      - "bh_report.py"
       - "requirements.txt"
   workflow_dispatch: {}
 
@@ -42,12 +43,21 @@ jobs:
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python report_bot.py
 
+      - name: Chay bot bao hanh
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: python bh_report.py
+
       - name: Luu trang thai da gui
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain state/last_sent.txt)" ]; then
-            git add state/last_sent.txt
+          if [ -n "$(git status --porcelain state/)" ]; then
+            git add state/
             git commit -m "Cap nhat trang thai da gui bao cao"
             git push
           fi
