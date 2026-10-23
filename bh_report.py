@@ -10,6 +10,7 @@ import csv
 import json
 import os
 import re
+import unicodedata
 from collections import Counter
 from datetime import datetime
 
@@ -25,9 +26,14 @@ STATE_FILE = "state/bh_sent.json"
 WORK_DAYS = 26  # số ngày làm việc/tháng dùng tính trung bình
 
 
+def norm(c):
+    return unicodedata.normalize("NFC", " ".join(str(c).split()))  # header Sheet có xuống dòng / dấu tổ hợp
+
+
 def parse(rows):
-    h = next(i for i, r in enumerate(rows) if "Số Lượng" in [" ".join(str(c).split()) for c in r])
-    head = [" ".join(str(c).split()) for c in rows[h]]  # header Sheet có xuống dòng
+    h = next(i for i, r in enumerate(rows) if "Số Lượng" in [norm(c) for c in r])
+    head = [norm(c) for c in rows[h]]
+    print("header:", head)
     col = {c: j for j, c in enumerate(head) if c}
     errs = head[col["Số Lượng"] + 1: col["Nguyên nhân"]]
     items = []
