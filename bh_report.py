@@ -26,8 +26,8 @@ WORK_DAYS = 26  # số ngày làm việc/tháng dùng tính trung bình
 
 
 def parse(rows):
-    h = next(i for i, r in enumerate(rows) if "Số Lượng" in [str(c).strip() for c in r])
-    head = [str(c).strip() for c in rows[h]]
+    h = next(i for i, r in enumerate(rows) if "Số Lượng" in [" ".join(str(c).split()) for c in r])
+    head = [" ".join(str(c).split()) for c in rows[h]]  # header Sheet có xuống dòng
     col = {c: j for j, c in enumerate(head) if c}
     errs = head[col["Số Lượng"] + 1: col["Nguyên nhân"]]
     items = []
