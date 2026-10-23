@@ -33,13 +33,12 @@ def norm(c):
 def parse(rows):
     h = next(i for i, r in enumerate(rows) if "Số Lượng" in [norm(c) for c in r])
     head = [norm(c) for c in rows[h]]
-    print("header:", head)
-    col = {c: j for j, c in enumerate(head) if c}
-    errs = head[col["Số Lượng"] + 1: col["Nguyên nhân"]]
+    col = {c.lower(): j for j, c in enumerate(head) if c}  # tab cũ ghi "Tổ phụ trách"
+    errs = head[col["số lượng"] + 1: col["nguyên nhân"]]
     items = []
     for r in rows[h + 1:]:
         r = [str(c).strip() for c in r] + [""] * len(head)
-        if "TỔNG" in r[:4] or not r[col["Tên Nệm"]]:
+        if "TỔNG" in r[:4] or not r[col["tên nệm"]]:
             continue
         items.append(r)
     return col, errs, items
@@ -47,18 +46,18 @@ def parse(rows):
 
 def caption(tab, rows, month_total=None):
     col, errs, items = parse(rows)
-    q = lambda r: int(r[col["Số Lượng"]] or 1)
+    q = lambda r: int(r[col["số lượng"]] or 1)
     total = sum(q(r) for r in items)
     if not total:
         return None, 0
     loi, ng, xl, to = Counter(), Counter(), Counter(), Counter()
     for r in items:
         for e in errs:
-            if r[col[e]].upper() == "X":
+            if r[col[e.lower()]].upper() == "X":
                 loi[e] += q(r)
-        ng[(r[col["Nguyên nhân"]] or r[col.get("Lỗi khác", 0)] or "Không ghi").rstrip(".")] += q(r)
-        xl["Hủy" if r[col["Hướng xử lý"]].lower().startswith("hủy") else "Sửa"] += q(r)
-        to["Tổ " + (r[col["Tổ Phụ Trách"]] or "?")] += q(r)
+        ng[(r[col["nguyên nhân"]] or r[col.get("lỗi khác", 0)] or "Không ghi").rstrip(".")] += q(r)
+        xl["Hủy" if r[col["hướng xử lý"]].lower().startswith("hủy") else "Sửa"] += q(r)
+        to["Tổ " + (r[col["tổ phụ trách"]] or "?")] += q(r)
     pct = lambda v: f"{v}/{total} ({round(v * 100 / total)}%)"
     sec = lambda title, c: [title] + [f"• {k}: {pct(v)}" for k, v in c.most_common()]
     out = [f"🛠️ {tab}", "", f"📦 Tổng: {total} nệm (Sửa {xl['Sửa']}, Hủy {xl['Hủy']})", ""]
