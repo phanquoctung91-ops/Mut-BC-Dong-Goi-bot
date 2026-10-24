@@ -9,6 +9,8 @@ on:
       - "bh_report.py"
       - "requirements.txt"
   workflow_dispatch: {}
+  schedule:
+    - cron: "0 1-11/2 * * *"  # 8h-18h VN, 2 tiếng/lần: bắt tab BH nhập muộn (report_bot tự dừng nếu đã gửi hôm nay)
 
 permissions:
   contents: write

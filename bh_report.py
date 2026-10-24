@@ -95,7 +95,8 @@ def main():
         if m and (m.group(2) or m.group(1) not in tabs):
             tabs[m.group(1)] = (p["title"], p["sheetId"])
     day = lambda k: datetime.strptime(k, "%d%m%y")
-    keys = sorted((k for k in tabs if day(k) <= today), key=day)
+    # chỉ tab ngày trước hôm nay: tab hôm nay có thể đang nhập dở
+    keys = sorted((k for k in tabs if day(k).date() < today.date()), key=day)
 
     cache = {}
     def rows_total(k):
