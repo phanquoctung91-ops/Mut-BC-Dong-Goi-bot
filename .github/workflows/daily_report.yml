@@ -7,6 +7,7 @@ on:
       - ".github/workflows/daily_report.yml"
       - "report_bot.py"
       - "bh_report.py"
+      - "may_report.py"
       - "requirements.txt"
   workflow_dispatch: {}
   schedule:
@@ -52,6 +53,15 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
         run: python bh_report.py
+
+      - name: Chay bot bao cao dong goi May
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: python may_report.py
 
       - name: Luu trang thai da gui
         if: always()
