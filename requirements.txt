@@ -5,3 +5,4 @@ pdf2image
 Pillow
 # kich hoat chay lai 05/11/2026
 # kich hoat chay bot May 09/11/2026
+# kich hoat bao cao May 101126
