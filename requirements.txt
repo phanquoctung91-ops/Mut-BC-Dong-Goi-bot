@@ -8,3 +8,4 @@ Pillow
 # kich hoat bao cao May 101126
 # gui lai bao cao May 091126
 # gui lai bao cao May 101126 BS
+# gui lai bao cao May 101126 ban ANSORA20-6
