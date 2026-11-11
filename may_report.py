@@ -87,7 +87,17 @@ def main():
         if m and (m.group(2) or m.group(1) not in tabs):
             tabs[m.group(1)] = (p["title"], p["sheetId"])
     day = lambda k: datetime.strptime(k, "%d%m%y")
-    keys = sorted((k for k in tabs if START <= day(k) <= today), key=day)
+    # Gửi cùng giờ với báo cáo đóng gói Mút (anh Tùng chốt 11/11/2026): chỉ gửi tab của ngày trước hôm nay,
+    # và chỉ sau khi bot Mút đã gửi trong hôm nay (state/last_sent.txt). Mút nghỉ thì sau 14h vẫn gửi.
+    today_day = today.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        mut_sent_today = json.load(open("state/last_sent.txt", encoding="utf-8")).get("last_success_run_date") == today.strftime("%Y-%m-%d")
+    except (FileNotFoundError, json.JSONDecodeError):
+        mut_sent_today = False
+    if not (mut_sent_today or today.hour >= 14):
+        print("Chờ bot Mút gửi báo cáo trước (hoặc sau 14h), chưa gửi báo cáo May.")
+        return
+    keys = sorted((k for k in tabs if START <= day(k) < today_day), key=day)
 
     for k in keys:
         if k in sent:
